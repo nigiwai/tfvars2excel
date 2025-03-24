@@ -1,0 +1,11 @@
+tfstate/
+venv/
+output/
+input/
+json/
+*.tfvars
+*.tfstate
+*.xlsx
+*.xlsm
+*.json
+.env
