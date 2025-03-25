@@ -218,14 +218,11 @@ def excel_to_tfvars(excel_file, sheet_name, output_file):
                         converted_value = cell_value
 
                 elif col_type == "bool":
-                    # 修正: cell_valueがNoneの場合はNoneにする
-                    if cell_value != "true" and cell_value != "false":
+                    if cell_value not in ("true","false"):
                         raise ValueError(
                             f"Error in sheet '{sheet.title}' for key '{key}', type:{col_type} '{header}' expects 'true' or 'false' but got '{cell_value}'"
                         )
-                    converted_value = (
-                        str(cell_value).lower()
-                    )
+                    converted_value = (cell_value.strip().lower() == "true")
                 elif col_type == "list":
                     converted_value = (
                         cell_value.splitlines()
