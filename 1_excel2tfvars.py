@@ -91,8 +91,12 @@ def generate_tfvars(sheets_data, output_file):
                         elif var_type == "list":
                             values = validated_value.split("\n")
                             f.write(f"{var_name} = [\n")
-                            for val in values:
-                                f.write(f'    "{val}",\n')
+                            for i, val in enumerate(values):
+                                # 最後の要素にカンマを付与しない
+                                if i < len(values) - 1:
+                                    f.write(f'    "{val}",\n')
+                                else:
+                                    f.write(f'    "{val}"\n')
                             f.write("]\n")
                         elif var_type == "map":
                             values = validated_value.split("\n")
