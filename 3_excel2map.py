@@ -3,14 +3,31 @@ import sys
 import json
 import os
 from dotenv import load_dotenv
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 # .envファイルを読み込む
+# openpyxl: Excelファイル操作ライブラリ
+# dotenv: 設定のための環境変数管理
 load_dotenv()
 SHEET_PREFIXES = os.getenv("3_SHEET_NAME_PREFIXES").split(",")
-DATA_ROW_START = int(os.getenv("3_DATA_ROW_START", "5"))
+DATA_ROW_START = int(os.getenv("3_DATA_ROW_START", "6"))
 
 
-def pretty_format_tf(value, indent=0):
+def pretty_format_tf(value: Any, indent: int = 0) -> str:
+    """
+    値をTerraform互換の文字列形式でフォーマットする。
+    
+    引数:
+        value: フォーマットする値（辞書、リスト、またはプリミティブ型）
+        indent: ネストされた構造のインデントレベル
+        
+    戻り値:
+        Terraform構文でフォーマットされた文字列
+        
+    注意:
+        Terraformの慣例に合わせて2スペースのインデントを使用します。
+        ブール値は小文字の'true'/'false'としてフォーマットされます。
+    """
     spaces = "  " * indent  # インデントを2スペースに変更
     if isinstance(value, dict):
         if not value:
@@ -41,7 +58,19 @@ def pretty_format_tf(value, indent=0):
             return str(value)
 
 
-def pretty_format_map(value, key_string="key", indent=0):
+def pretty_format_map(value: Any, key_string: str = "key", 
+                      indent: int = 0) -> str:
+    """
+    リスト値を生成されたキーを持つマップとしてフォーマットする。
+    
+    引数:
+        value: フォーマットする値
+        key_string: 生成されるマップキーの接頭辞
+        indent: 現在のインデントレベル
+        
+    戻り値:
+        フォーマットされたマップ文字列
+    """
     spaces = "  " * indent
     if isinstance(value, list):
         new_dict = {}
@@ -52,7 +81,17 @@ def pretty_format_map(value, key_string="key", indent=0):
         return pretty_format_tf(value, indent)
 
 
-def pretty_format_list_object(value, indent=0):
+def pretty_format_list_object(value: Any, indent: int = 0) -> str:
+    """
+    各項目に末尾のカンマを付けてオブジェクトのリストをフォーマットする。
+    
+    引数:
+        value: フォーマットするリスト
+        indent: 現在のインデントレベル
+        
+    戻り値:
+        末尾にカンマを付けてフォーマットされたリスト文字列
+    """
     spaces = "  " * indent
     if isinstance(value, list):
         lines = []
@@ -67,11 +106,24 @@ def pretty_format_list_object(value, indent=0):
         return pretty_format_tf(value, indent)
 
 
-def convert(elem_type, val):
+def convert(elem_type: str, val: Any) -> Any:
+    """
+    文字列値を型指定に基づいて適切な型に変換する。
+    
+    引数:
+        elem_type: 変換先の型（"number", "bool", "list"など）
+        val: 変換する値
+        
+    戻り値:
+        変換された値
+        
+    注意:
+        変換に失敗した場合はデータの整合性を保つために元の値を返します。
+    """
     if elem_type == "number":
         try:
             return float(val) if "." in val else int(val)
-        except:
+        except (ValueError, TypeError):
             return val
     elif elem_type == "bool":
         return val.lower() == "true"
@@ -95,8 +147,23 @@ def convert(elem_type, val):
         return val
 
 
-# 値フォーマットをまとめるヘルパー関数
-def format_value(value, typ, field=None, object_defs=None):
+def format_value(value: Any, typ: str, field: Optional[str] = None,
+                 object_defs: Optional[Dict[str, Any]] = None) -> str:
+    """
+    terraform.tfvars出力用に型に基づいて値をフォーマットする。
+    
+    引数:
+        value: フォーマットする値
+        typ: 型指定（"string", "number", "bool"など）
+        field: フィールド名（オプション、マップキー生成に使用）
+        object_defs: オブジェクト定義辞書（オプション）
+        
+    戻り値:
+        フォーマットされた値の文字列
+        
+    例外:
+        ValueError: サポートされていない型が指定された場合
+    """
     # 空やNoneの場合は type に応じて適切に処理
     if typ in ["string", "number", "bool"]:
         # Noneや空文字の場合はnullで出力
@@ -135,41 +202,79 @@ def format_value(value, typ, field=None, object_defs=None):
         raise ValueError(f"Unsupported type: {typ}")
 
 
-def excel_to_tfvars(excel_filepath, sheet_title, output_filepath):
-    wb = openpyxl.load_workbook(excel_filepath)
-    sheet = wb[sheet_title]
-
-    # ヘッダー等の読み込み（先頭3行）
+def _parse_sheet_metadata(sheet: Any) -> Tuple[List[str], List[str], 
+                                               Dict[int, Dict[str, str]], 
+                                               List[int]]:
+    """
+    Excelシートのヘッダー行からメタデータを解析する。
+    
+    引数:
+        sheet: openpyxlワークシートオブジェクト
+        
+    戻り値:
+        以下を含むタプル:
+        - headers: 列ヘッダーのリスト
+        - column_types: 列の型のリスト
+        - object_type_defs: オブジェクト定義の辞書
+        - object_field_counts: 列ごとのフィールド数のリスト
+        
+    例外:
+        ValueError: map(object)型に必須の'key'フィールドが不足している場合
+    """
     max_col = sheet.max_column
-    headers = []
-    column_types = []
-    object_type_defs = {}
-    object_field_counts = []
+    headers: List[str] = []
+    column_types: List[str] = []
+    object_type_defs: Dict[int, Dict[str, str]] = {}
+    object_field_counts: List[int] = []
+    
     for col in range(1, max_col + 1):
         header = sheet.cell(row=1, column=col).value
         headers.append(header)
         col_type = sheet.cell(row=2, column=col).value or "string"
         column_types.append(col_type)
+        
+        # 3行目からオブジェクト型定義を解析
         if col_type in ["map(object)", "object", "list(object)"]:
             definitions = sheet.cell(row=3, column=col).value
-            object_def = {}
+            object_def: Dict[str, str] = {}
             if definitions:
                 for line in definitions.splitlines():
                     if ":" in line:
                         elem, elem_type = line.split(":", 1)
                         object_def[elem.strip()] = elem_type.strip()
+            
+            # map(object)に必須の'key'フィールドを検証
             if col_type == "map(object)" and "key" not in object_def:
                 raise ValueError(
                     f"Error: 'key' field is missing for map(object) in {header}"
                 )
             object_type_defs[col - 1] = object_def
+        
+        # 4行目からフィールド数を取得
         object_num = sheet.cell(row=4, column=col).value
         try:
             object_field_counts.append(int(object_num))
         except (ValueError, TypeError):
             object_field_counts.append(0)
-    # 変更: 重複ヘッダーの場合は定義をマージする
-    merged_object_defs = {}
+    
+    return headers, column_types, object_type_defs, object_field_counts
+
+
+def _merge_object_definitions(headers: List[str], column_types: List[str],
+                              object_type_defs: Dict[int, Dict[str, str]]
+                              ) -> Dict[str, Dict[str, str]]:
+    """
+    重複するヘッダーのオブジェクト定義をマージする。
+    
+    引数:
+        headers: 列ヘッダーのリスト
+        column_types: 列の型のリスト
+        object_type_defs: オブジェクト型定義の辞書
+        
+    戻り値:
+        マージされたオブジェクト定義辞書
+    """
+    merged_object_defs: Dict[str, Dict[str, str]] = {}
     for i in range(len(headers)):
         if column_types[i] in ["map(object)", "object", "list(object)"]:
             key = headers[i]
@@ -178,9 +283,24 @@ def excel_to_tfvars(excel_filepath, sheet_title, output_filepath):
                 merged_object_defs[key].update(current_def)
             else:
                 merged_object_defs[key] = current_def
+    return merged_object_defs
 
-    # 変更: 参照元・参照先対応のための ref_map 作成
-    ref_header_map = {}
+
+def _create_reference_map(headers: List[str], column_types: List[str],
+                          merged_object_defs: Dict[str, Dict[str, str]]
+                          ) -> Dict[str, List[str]]:
+    """
+    ソースと宛先ヘッダー間の参照マッピングを作成する。
+    
+    引数:
+        headers: 列ヘッダーのリスト
+        column_types: 列の型のリスト
+        merged_object_defs: マージされたオブジェクト定義
+        
+    戻り値:
+        参照マッピング辞書
+    """
+    ref_header_map: Dict[str, List[str]] = {}
     for i, hdr in enumerate(headers):
         if (
             column_types[i] in ["map(object)", "object", "list(object)"]
@@ -191,19 +311,65 @@ def excel_to_tfvars(excel_filepath, sheet_title, output_filepath):
                     if hdr not in ref_header_map:
                         ref_header_map[hdr] = []
                     ref_header_map[hdr].append(field)
+    return ref_header_map
 
-    header_type_dict = {headers[i]: column_types[i] for i in range(1, max_col)}
 
-    # データ行は5行目以降
-    tfvars_data_map = {}
+def excel_to_tfvars(excel_filepath: str, sheet_title: str,
+                    output_filepath: str) -> None:
+    """
+    Excelシートをterraform.tfvars形式に変換する。
+    
+    引数:
+        excel_filepath: Excelファイルへのパス
+        sheet_title: 変換するシート名
+        output_filepath: 出力するtfvarsファイルのパス
+        
+    例外:
+        ValueError: データ行のキーがNoneの場合やデータ形式が無効な場合
+        
+    注意:
+        Excelシートの構造:
+        - 1行目: ヘッダー
+        - 2行目: データ型
+        - 3行目: オブジェクト定義（複合型の場合）
+        - 4行目: フィールド数
+        - 5行目: Description（オプション）
+        - 6行目以降: データ行（DATA_ROW_START環境変数で設定可能）
+    """
+    wb = openpyxl.load_workbook(excel_filepath)
+    sheet = wb[sheet_title]
+
+    # シートのメタデータをヘッダー行から解析
+    headers, column_types, object_type_defs, object_field_counts = (
+        _parse_sheet_metadata(sheet)
+    )
+    
+    # 重複ヘッダーの定義をマージ
+    merged_object_defs = _merge_object_definitions(
+        headers, column_types, object_type_defs
+    )
+    
+    # ネストされたオブジェクトの関係のための参照マッピング作成
+    ref_header_map = _create_reference_map(
+        headers, column_types, merged_object_defs
+    )
+
+    # ヘッダーから型へのマッピング作成（最初の列はキーなので除外）
+    header_type_dict: Dict[str, str] = {
+        headers[i]: column_types[i] for i in range(1, len(headers))
+    }
+
+    # データ行の処理
+    tfvars_data_map: Dict[str, Dict[str, Any]] = {}
     for row_idx, row in enumerate(
         sheet.iter_rows(min_row=DATA_ROW_START, values_only=True), start=DATA_ROW_START
     ):
         row_key = row[0]
         if row_key is None:
             raise ValueError(f"Error: Key is None in row {row_idx}")
-        row_values = {}
-        for idx in range(1, max_col):
+        
+        row_values: Dict[str, Any] = {}
+        for idx in range(1, len(headers)):
             cell_value = row[idx]
             col_type = column_types[idx]
             header = headers[idx]
@@ -222,10 +388,13 @@ def excel_to_tfvars(excel_filepath, sheet_title, output_filepath):
                     except:
                         converted_value = cell_value
 
+                # ブール値の厳密な検証
                 elif col_type == "bool":
                     if cell_value not in ("true", "false"):
                         raise ValueError(
-                            f"Error in sheet '{sheet.title}' for key '{row_key}', type:{col_type} '{header}' expects 'true' or 'false' but got '{cell_value}'"
+                            f"Error in sheet '{sheet.title}' for key '{row_key}', "
+                            f"type:{col_type} '{header}' expects 'true' or 'false' "
+                            f"but got '{cell_value}'"
                         )
                     converted_value = cell_value.strip().lower() == "true"
                 elif col_type == "list":
@@ -242,7 +411,10 @@ def excel_to_tfvars(excel_filepath, sheet_title, output_filepath):
                             values_list = [p.strip() for p in line.split(":")]
                             if len(values_list) != object_field_counts[idx]:
                                 raise ValueError(
-                                    f"Error in sheet '{sheet.title}' for key '{row_key}', type:{col_type} '{header}' expects {object_num} elements but got {len(values_list)} in line: {line}"
+                                    f"Error in sheet '{sheet.title}' for key "
+                                    f"'{row_key}', type:{col_type} '{header}' "
+                                    f"expects {object_field_counts[idx]} elements "
+                                    f"but got {len(values_list)} in line: {line}"
                                 )
                             obj = {}
                             for i, key_elem in enumerate(
@@ -363,12 +535,13 @@ if __name__ == "__main__":
 
     excel_file_path = sys.argv[1]
 
-    # Excelファイル名からフォルダ名を作成
+    # 出力ディレクトリ構造の作成
     excel_file_name = os.path.splitext(os.path.basename(excel_file_path))[0]
     output_folder = os.path.join("output", excel_file_name)
     os.makedirs(output_folder, exist_ok=True)
     output_tfvars_file = os.path.join(output_folder, "terraform.tfvars")
 
+    # 設定されたプレフィックスに一致するシートを処理
     wb = openpyxl.load_workbook(excel_file_path)
     for sheet_name in wb.sheetnames:
         if any(sheet_name.startswith(prefix) for prefix in SHEET_PREFIXES):
