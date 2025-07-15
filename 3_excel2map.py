@@ -143,6 +143,9 @@ def convert(elem_type: str, val: Any) -> Any:
         if val is None:
             return {}
         return val
+    elif elem_type == "object2":
+        # object2型は特別な処理を行う
+        return val
     else:
         return val
 
@@ -187,6 +190,11 @@ def format_value(value: Any, typ: str, field: Optional[str] = None,
         if value is None:
             return "null"
         return pretty_format_tf(value, 2)
+    elif typ == "object2":
+        # object2型は通常のオブジェクトとして出力
+        if value is None:
+            return "{}"
+        return pretty_format_tf(value, 2)
     elif typ == "list(object)":
         # Noneの場合は空リスト
         if value is None:
@@ -198,6 +206,11 @@ def format_value(value: Any, typ: str, field: Optional[str] = None,
             return "{}"
         key_str = object_defs.get(field, {}).get("key", field) if object_defs else field
         return pretty_format_map(value, key_str, 2)
+    elif typ == "object2":
+        # object2型は特別なフォーマット処理を行う
+        if value is None:
+            return "{}"
+        return _parse_object2_data(value)
     else:
         raise ValueError(f"Unsupported type: {typ}")
 
@@ -314,6 +327,46 @@ def _create_reference_map(headers: List[str], column_types: List[str],
     return ref_header_map
 
 
+def _parse_object2_data(cell_value: str) -> Dict[str, Any]:
+    """
+    object2型のデータをパースして辞書に変換する。
+    
+    引数:
+        cell_value: 'key名:keyデータ型:value'形式の文字列（複数行可）
+        
+    戻り値:
+        変換されたキーと値のマッピング
+        
+    注意:
+        各行は 'key名:keyデータ型:value' 形式である必要があります。
+        サポートされるデータ型: string, bool, number
+    """
+    result = {}
+    if not cell_value:
+        return result
+        
+    # 複数行の場合は行ごとに処理
+    lines = cell_value.splitlines()
+    for line in lines:
+        if not line.strip():
+            continue
+            
+        # 'key名:keyデータ型:value'の形式をパース
+        parts = line.split(':', 2)
+        if len(parts) != 3:
+            continue
+            
+        key_name = parts[0].strip()
+        key_type = parts[1].strip()
+        raw_value = parts[2].strip()
+        
+        # 型に応じた変換を適用
+        converted_value = convert(key_type, raw_value)
+        result[key_name] = converted_value
+        
+    return result
+
+
 def excel_to_tfvars(excel_filepath: str, sheet_title: str,
                     output_filepath: str) -> None:
     """
@@ -335,6 +388,11 @@ def excel_to_tfvars(excel_filepath: str, sheet_title: str,
         - 4行目: フィールド数
         - 5行目: Description（オプション）
         - 6行目以降: データ行（DATA_ROW_START環境変数で設定可能）
+        
+        object2型のデータ形式:
+        - 2行目: 'object2'と指定
+        - 3,4行目: 空
+        - データ行: 'key名:keyデータ型:value'形式（複数行可）
     """
     wb = openpyxl.load_workbook(excel_filepath)
     sheet = wb[sheet_title]
@@ -403,6 +461,9 @@ def excel_to_tfvars(excel_filepath: str, sheet_title: str,
                         if (isinstance(cell_value, str) and "\n" in cell_value)
                         else [cell_value]
                     )
+                # 新しいobject2型の処理
+                elif col_type == "object2":
+                    converted_value = _parse_object2_data(cell_value)
                 elif col_type in ["map(object)", "object", "list(object)"]:
                     lines = str(cell_value).splitlines()
                     if header in merged_object_defs:
