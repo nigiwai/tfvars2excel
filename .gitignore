@@ -9,3 +9,4 @@ json/
 *.xlsm
 *.json
 .env
+.github/
