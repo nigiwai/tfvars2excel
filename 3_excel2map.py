@@ -16,14 +16,14 @@ DATA_ROW_START = int(os.getenv("3_DATA_ROW_START", "6"))
 def pretty_format_tf(value: Any, indent: int = 0) -> str:
     """
     値をTerraform互換の文字列形式でフォーマットする。
-    
+
     引数:
         value: フォーマットする値（辞書、リスト、またはプリミティブ型）
         indent: ネストされた構造のインデントレベル
-        
+
     戻り値:
         Terraform構文でフォーマットされた文字列
-        
+
     注意:
         Terraformの慣例に合わせて2スペースのインデントを使用します。
         ブール値は小文字の'true'/'false'としてフォーマットされます。
@@ -58,16 +58,15 @@ def pretty_format_tf(value: Any, indent: int = 0) -> str:
             return str(value)
 
 
-def pretty_format_map(value: Any, key_string: str = "key", 
-                      indent: int = 0) -> str:
+def pretty_format_map(value: Any, key_string: str = "key", indent: int = 0) -> str:
     """
     リスト値を生成されたキーを持つマップとしてフォーマットする。
-    
+
     引数:
         value: フォーマットする値
         key_string: 生成されるマップキーの接頭辞
         indent: 現在のインデントレベル
-        
+
     戻り値:
         フォーマットされたマップ文字列
     """
@@ -84,11 +83,11 @@ def pretty_format_map(value: Any, key_string: str = "key",
 def pretty_format_list_object(value: Any, indent: int = 0) -> str:
     """
     各項目に末尾のカンマを付けてオブジェクトのリストをフォーマットする。
-    
+
     引数:
         value: フォーマットするリスト
         indent: 現在のインデントレベル
-        
+
     戻り値:
         末尾にカンマを付けてフォーマットされたリスト文字列
     """
@@ -109,14 +108,14 @@ def pretty_format_list_object(value: Any, indent: int = 0) -> str:
 def convert(elem_type: str, val: Any) -> Any:
     """
     文字列値を型指定に基づいて適切な型に変換する。
-    
+
     引数:
         elem_type: 変換先の型（"number", "bool", "list"など）
         val: 変換する値
-        
+
     戻り値:
         変換された値
-        
+
     注意:
         変換に失敗した場合はデータの整合性を保つために元の値を返します。
     """
@@ -150,20 +149,24 @@ def convert(elem_type: str, val: Any) -> Any:
         return val
 
 
-def format_value(value: Any, typ: str, field: Optional[str] = None,
-                 object_defs: Optional[Dict[str, Any]] = None) -> str:
+def format_value(
+    value: Any,
+    typ: str,
+    field: Optional[str] = None,
+    object_defs: Optional[Dict[str, Any]] = None,
+) -> str:
     """
     terraform.tfvars出力用に型に基づいて値をフォーマットする。
-    
+
     引数:
         value: フォーマットする値
         typ: 型指定（"string", "number", "bool"など）
         field: フィールド名（オプション、マップキー生成に使用）
         object_defs: オブジェクト定義辞書（オプション）
-        
+
     戻り値:
         フォーマットされた値の文字列
-        
+
     例外:
         ValueError: サポートされていない型が指定された場合
     """
@@ -215,22 +218,22 @@ def format_value(value: Any, typ: str, field: Optional[str] = None,
         raise ValueError(f"Unsupported type: {typ}")
 
 
-def _parse_sheet_metadata(sheet: Any) -> Tuple[List[str], List[str], 
-                                               Dict[int, Dict[str, str]], 
-                                               List[int]]:
+def _parse_sheet_metadata(
+    sheet: Any,
+) -> Tuple[List[str], List[str], Dict[int, Dict[str, str]], List[int]]:
     """
     Excelシートのヘッダー行からメタデータを解析する。
-    
+
     引数:
         sheet: openpyxlワークシートオブジェクト
-        
+
     戻り値:
         以下を含むタプル:
         - headers: 列ヘッダーのリスト
         - column_types: 列の型のリスト
         - object_type_defs: オブジェクト定義の辞書
         - object_field_counts: 列ごとのフィールド数のリスト
-        
+
     例外:
         ValueError: map(object)型に必須の'key'フィールドが不足している場合
     """
@@ -239,13 +242,13 @@ def _parse_sheet_metadata(sheet: Any) -> Tuple[List[str], List[str],
     column_types: List[str] = []
     object_type_defs: Dict[int, Dict[str, str]] = {}
     object_field_counts: List[int] = []
-    
+
     for col in range(1, max_col + 1):
         header = sheet.cell(row=1, column=col).value
         headers.append(header)
         col_type = sheet.cell(row=2, column=col).value or "string"
         column_types.append(col_type)
-        
+
         # 3行目からオブジェクト型定義を解析
         if col_type in ["map(object)", "object", "list(object)"]:
             definitions = sheet.cell(row=3, column=col).value
@@ -255,35 +258,37 @@ def _parse_sheet_metadata(sheet: Any) -> Tuple[List[str], List[str],
                     if ":" in line:
                         elem, elem_type = line.split(":", 1)
                         object_def[elem.strip()] = elem_type.strip()
-            
+
             # map(object)に必須の'key'フィールドを検証
             if col_type == "map(object)" and "key" not in object_def:
                 raise ValueError(
                     f"Error: 'key' field is missing for map(object) in {header}"
                 )
             object_type_defs[col - 1] = object_def
-        
+
         # 4行目からフィールド数を取得
         object_num = sheet.cell(row=4, column=col).value
         try:
             object_field_counts.append(int(object_num))
         except (ValueError, TypeError):
             object_field_counts.append(0)
-    
+
     return headers, column_types, object_type_defs, object_field_counts
 
 
-def _merge_object_definitions(headers: List[str], column_types: List[str],
-                              object_type_defs: Dict[int, Dict[str, str]]
-                              ) -> Dict[str, Dict[str, str]]:
+def _merge_object_definitions(
+    headers: List[str],
+    column_types: List[str],
+    object_type_defs: Dict[int, Dict[str, str]],
+) -> Dict[str, Dict[str, str]]:
     """
     重複するヘッダーのオブジェクト定義をマージする。
-    
+
     引数:
         headers: 列ヘッダーのリスト
         column_types: 列の型のリスト
         object_type_defs: オブジェクト型定義の辞書
-        
+
     戻り値:
         マージされたオブジェクト定義辞書
     """
@@ -299,17 +304,19 @@ def _merge_object_definitions(headers: List[str], column_types: List[str],
     return merged_object_defs
 
 
-def _create_reference_map(headers: List[str], column_types: List[str],
-                          merged_object_defs: Dict[str, Dict[str, str]]
-                          ) -> Dict[str, List[str]]:
+def _create_reference_map(
+    headers: List[str],
+    column_types: List[str],
+    merged_object_defs: Dict[str, Dict[str, str]],
+) -> Dict[str, List[str]]:
     """
     ソースと宛先ヘッダー間の参照マッピングを作成する。
-    
+
     引数:
         headers: 列ヘッダーのリスト
         column_types: 列の型のリスト
         merged_object_defs: マージされたオブジェクト定義
-        
+
     戻り値:
         参照マッピング辞書
     """
@@ -330,13 +337,13 @@ def _create_reference_map(headers: List[str], column_types: List[str],
 def _parse_object2_data(cell_value: str) -> Dict[str, Any]:
     """
     object2型のデータをパースして辞書に変換する。
-    
+
     引数:
         cell_value: 'key名:keyデータ型:value'形式の文字列（複数行可）
-        
+
     戻り値:
         変換されたキーと値のマッピング
-        
+
     注意:
         各行は 'key名:keyデータ型:value' 形式である必要があります。
         サポートされるデータ型: string, bool, number
@@ -344,42 +351,43 @@ def _parse_object2_data(cell_value: str) -> Dict[str, Any]:
     result = {}
     if not cell_value:
         return result
-        
+
     # 複数行の場合は行ごとに処理
     lines = cell_value.splitlines()
     for line in lines:
         if not line.strip():
             continue
-            
+
         # 'key名:keyデータ型:value'の形式をパース
-        parts = line.split(':', 2)
+        parts = line.split(":", 2)
         if len(parts) != 3:
             continue
-            
+
         key_name = parts[0].strip()
         key_type = parts[1].strip()
         raw_value = parts[2].strip()
-        
+
         # 型に応じた変換を適用
         converted_value = convert(key_type, raw_value)
         result[key_name] = converted_value
-        
+
     return result
 
 
-def excel_to_tfvars(excel_filepath: str, sheet_title: str,
-                    output_filepath: str) -> None:
+def excel_to_tfvars(
+    excel_filepath: str, sheet_title: str, output_filepath: str
+) -> None:
     """
     Excelシートをterraform.tfvars形式に変換する。
-    
+
     引数:
         excel_filepath: Excelファイルへのパス
         sheet_title: 変換するシート名
         output_filepath: 出力するtfvarsファイルのパス
-        
+
     例外:
         ValueError: データ行のキーがNoneの場合やデータ形式が無効な場合
-        
+
     注意:
         Excelシートの構造:
         - 1行目: ヘッダー
@@ -388,7 +396,7 @@ def excel_to_tfvars(excel_filepath: str, sheet_title: str,
         - 4行目: フィールド数
         - 5行目: Description（オプション）
         - 6行目以降: データ行（DATA_ROW_START環境変数で設定可能）
-        
+
         object2型のデータ形式:
         - 2行目: 'object2'と指定
         - 3,4行目: 空
@@ -401,16 +409,14 @@ def excel_to_tfvars(excel_filepath: str, sheet_title: str,
     headers, column_types, object_type_defs, object_field_counts = (
         _parse_sheet_metadata(sheet)
     )
-    
+
     # 重複ヘッダーの定義をマージ
     merged_object_defs = _merge_object_definitions(
         headers, column_types, object_type_defs
     )
-    
+
     # ネストされたオブジェクトの関係のための参照マッピング作成
-    ref_header_map = _create_reference_map(
-        headers, column_types, merged_object_defs
-    )
+    ref_header_map = _create_reference_map(headers, column_types, merged_object_defs)
 
     # ヘッダーから型へのマッピング作成（最初の列はキーなので除外）
     header_type_dict: Dict[str, str] = {
@@ -425,7 +431,7 @@ def excel_to_tfvars(excel_filepath: str, sheet_title: str,
         row_key = row[0]
         if row_key is None:
             raise ValueError(f"Error: Key is None in row {row_idx}")
-        
+
         row_values: Dict[str, Any] = {}
         for idx in range(1, len(headers)):
             cell_value = row[idx]
@@ -469,7 +475,35 @@ def excel_to_tfvars(excel_filepath: str, sheet_title: str,
                     if header in merged_object_defs:
                         objects = []
                         for line in lines:
-                            values_list = [p.strip() for p in line.split(":")]
+                            # URLを含むオブジェクト行の特別処理
+                            if col_type == "object" and (
+                                "http:" in line or "https:" in line
+                            ):
+                                # URLを含む場合、最初のURLプロトコル部分は分割せず保持
+                                if object_field_counts[idx] == 1:
+                                    # 要素数が1の場合、行全体を1つの要素として扱う
+                                    values_list = [line.strip()]
+                                else:
+                                    # 要素数が複数の場合は特別な分割処理を行う
+                                    # プロトコル部分を含むURLを検出
+                                    url_part_end = line.find(":", line.find(":") + 1)
+                                    if url_part_end > 0:
+                                        # URLプロトコル部分を保持
+                                        url_part = line[:url_part_end]
+                                        # 残りの部分を通常通り分割
+                                        remaining = line[url_part_end + 1 :]
+                                        parts = [
+                                            p.strip() for p in remaining.split(":")
+                                        ]
+                                        values_list = [url_part] + parts
+                                    else:
+                                        # URLのみの場合
+                                        values_list = [line.strip()]
+                            else:
+                                # 通常の行は標準的な分割
+                                values_list = [p.strip() for p in line.split(":")]
+
+                            # 要素数チェック
                             if len(values_list) != object_field_counts[idx]:
                                 raise ValueError(
                                     f"Error in sheet '{sheet.title}' for key "
