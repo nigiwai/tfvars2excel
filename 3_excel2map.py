@@ -34,8 +34,13 @@ def pretty_format_tf(value: Any, indent: int = 0) -> str:
             return "{}"
         lines = []
         for k, v in value.items():
-            key_str = k if k.isidentifier() else json.dumps(k, ensure_ascii=False)
-            lines.append(f"{spaces}  {key_str} = {pretty_format_tf(v, indent+1)}")
+            key_str = (
+                k if k.isidentifier()
+                else json.dumps(k, ensure_ascii=False)
+            )
+            lines.append(
+                f"{spaces}  {key_str} = {pretty_format_tf(v, indent + 1)}"
+            )
         return "{\n" + "\n".join(lines) + f"\n{spaces}}}"
     elif isinstance(value, list):
         if not value:
@@ -70,7 +75,6 @@ def pretty_format_map(value: Any, key_string: str = "key", indent: int = 0) -> s
     戻り値:
         フォーマットされたマップ文字列
     """
-    spaces = "  " * indent
     if isinstance(value, list):
         new_dict = {}
         for i, item in enumerate(value, start=1):
@@ -129,7 +133,8 @@ def convert(elem_type: str, val: Any) -> Any:
     elif elem_type == "list":
         if val is None:
             return []
-        return [item.strip() for item in val.split(",")]
+        # 数値など文字列以外の値も str() で文字列に変換して list(string) を保証する
+        return [item.strip() for item in str(val).split(",")]
     elif elem_type == "list(object)":
         if val is None:
             return []
@@ -207,13 +212,12 @@ def format_value(
         # Noneの場合は {}
         if value is None:
             return "{}"
-        key_str = object_defs.get(field, {}).get("key", field) if object_defs else field
+        key_str = (
+            object_defs.get(field, {}).get("key", field)
+            if object_defs
+            else field
+        )
         return pretty_format_map(value, key_str, 2)
-    elif typ == "object2":
-        # object2型は特別なフォーマット処理を行う
-        if value is None:
-            return "{}"
-        return _parse_object2_data(value)
     else:
         raise ValueError(f"Unsupported type: {typ}")
 
@@ -449,7 +453,7 @@ def excel_to_tfvars(
                             if "." in str(cell_value)
                             else int(cell_value)
                         )
-                    except:
+                    except (ValueError, TypeError):
                         converted_value = cell_value
 
                 # ブール値の厳密な検証
@@ -462,11 +466,15 @@ def excel_to_tfvars(
                         )
                     converted_value = cell_value.strip().lower() == "true"
                 elif col_type == "list":
-                    converted_value = (
-                        cell_value.splitlines()
-                        if (isinstance(cell_value, str) and "\n" in cell_value)
-                        else [cell_value]
-                    )
+                    # 数値など文字列以外のセル値も str() で変換して list(string) を保証する
+                    if isinstance(cell_value, str) and "\n" in cell_value:
+                        converted_value = [
+                            v.strip()
+                            for v in cell_value.splitlines()
+                            if v.strip()
+                        ]
+                    else:
+                        converted_value = [str(cell_value)]
                 # 新しいobject2型の処理
                 elif col_type == "object2":
                     converted_value = _parse_object2_data(cell_value)
@@ -545,7 +553,7 @@ def excel_to_tfvars(
         # 変更: 参照先の値を参照元のmapsにネストして結合する
         for src_hdr, dest_list in ref_header_map.items():
             for dest_hdr in dest_list:
-                if src_hdr in {h for h in headers} and dest_hdr in {h for h in headers}:
+                if src_hdr in headers and dest_hdr in headers:
                     if (
                         src_hdr in row_values
                         and dest_hdr in row_values
@@ -603,7 +611,6 @@ def excel_to_tfvars(
                             row_values[src_hdr] = src_val
                     row_values.pop(dest_hdr, None)
         tfvars_data_map[row_key] = row_values
-    # 各ヘッダーの型情報をマッピング（先頭列以外）
 
     # tfvarsファイルとして出力（Terraformの各typeをシンプルに処理）
     mode = "a" if os.path.exists(output_filepath) else "w"
