@@ -1,5 +1,6 @@
 tfstate/
 venv/
+.venv/
 output/
 input/
 json/
